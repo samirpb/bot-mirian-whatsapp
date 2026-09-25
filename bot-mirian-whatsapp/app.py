@@ -27,7 +27,7 @@ def whatsapp():
     # Guardar mensaje del usuario
     conversaciones[numero].append({"role": "user", "content": incoming_msg})
 
-    # Lógica rápida para citas antes de llamar a OpenAI (para no gastar tokens)
+    # Lógica rápida para no gastar tokens
     texto_lower = incoming_msg.lower()
     respuesta_final = None
 
@@ -35,19 +35,20 @@ def whatsapp():
         horarios = get_horarios()
         respuesta_final = f"Claro, estos son los horarios disponibles:\n{horarios}\n\n¿Que día te sirve?"
 
-    # Si no es horario, usamos a OpenAI con tu prompt
+    elif "agendar" in texto_lower or ("cita" in texto_lower and "mañana" in texto_lower):
+        resultado = agendar_cita(numero, incoming_msg)
+        respuesta_final = f"¡Listo! {resultado}"
+
+    # Si no es horario ni agendar, usamos a OpenAI
     if not respuesta_final:
         try:
             completion = client.chat.completions.create(
-                model="gpt-4o-mini", # barato y rápido para empezar
+                model="gpt-4o-mini",
                 messages=conversaciones[numero],
                 temperature=0.7
             )
             respuesta_final = completion.choices[0].message.content
             conversaciones[numero].append({"role": "assistant", "content": respuesta_final})
-
-            # Si la IA detecta que quiere agendar, aquí llamas a agendar_cita()
-            # Ejemplo simple: if "agendar" in respuesta_final.lower(): agendar_cita(...)
 
         except Exception as e:
             print(f"Error con OpenAI: {e}")
@@ -57,7 +58,7 @@ def whatsapp():
     resp.message(respuesta_final)
     return str(resp)
 
-# Para Render - Mirian ya no usa puerto 5000 fijo
+# Para Render
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
