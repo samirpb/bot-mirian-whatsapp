@@ -2,27 +2,62 @@ from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
 import os
 from dotenv import load_dotenv
+from openai import OpenAI
 from prompts import SYSTEM_PROMPT
 from gesden import get_horarios, agendar_cita
 
 load_dotenv()
 app = Flask(__name__)
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# Memoria simple Mirian (en memoria, para no pagar base de datos aún)
+conversaciones = {}
 
 @app.route("/whatsapp", methods=["POST"])
 def whatsapp():
-    incoming_msg = request.values.get('Body', '').lower()
-    resp = MessagingResponse()
-    msg = resp.message()
+    numero = request.values.get('From', '')
+    incoming_msg = request.values.get('Body', '').strip()
 
-    if "hola" in incoming_msg or "cita" in incoming_msg:
-        msg.body("Hola! Soy tu asistente virtual. ¿Qué servicio necesitas y qué día?")
-    elif "cancelar" in incoming_msg:
-        msg.body("Claro, dime tu nombre y la fecha para cancelar.")
-    else:
-        # Aquí luego conectamos OpenAI
-        msg.body(f"Recibí: {incoming_msg}. {SYSTEM_PROMPT[:50]}...")
-    
+    print(f"Mirian recibió de {numero}: {incoming_msg}")
+
+    # Inicializar historial si es primera vez
+    if numero not in conversaciones:
+        conversaciones[numero] = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+    # Guardar mensaje del usuario
+    conversaciones[numero].append({"role": "user", "content": incoming_msg})
+
+    # Lógica rápida para citas antes de llamar a OpenAI (para no gastar tokens)
+    texto_lower = incoming_msg.lower()
+    respuesta_final = None
+
+    if "horario" in texto_lower or "disponible" in texto_lower:
+        horarios = get_horarios()
+        respuesta_final = f"Claro, estos son los horarios disponibles:\n{horarios}\n\n¿Que día te sirve?"
+
+    # Si no es horario, usamos a OpenAI con tu prompt
+    if not respuesta_final:
+        try:
+            completion = client.chat.completions.create(
+                model="gpt-4o-mini", # barato y rápido para empezar
+                messages=conversaciones[numero],
+                temperature=0.7
+            )
+            respuesta_final = completion.choices[0].message.content
+            conversaciones[numero].append({"role": "assistant", "content": respuesta_final})
+
+            # Si la IA detecta que quiere agendar, aquí llamas a agendar_cita()
+            # Ejemplo simple: if "agendar" in respuesta_final.lower(): agendar_cita(...)
+
+        except Exception as e:
+            print(f"Error con OpenAI: {e}")
+            respuesta_final = "Uy, se me fue la señal un segundito. ¿Me repites porfa?"
+
+    resp = MessagingResponse()
+    resp.message(respuesta_final)
     return str(resp)
 
+# Para Render - Mirian ya no usa puerto 5000 fijo
 if __name__ == "__main__":
-    app.run(port=5000, debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
